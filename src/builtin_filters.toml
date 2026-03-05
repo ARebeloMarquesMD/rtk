@@ -448,3 +448,135 @@ input = """
 [INFO] Finished at: 2024-01-15T10:30:00Z
 """
 expected = "[INFO] BUILD SUCCESS\n[INFO] Total time: 4.123 s\n[INFO] Finished at: 2024-01-15T10:30:00Z"
+
+# ---------------------------------------------------------------------------
+# PR 2 built-in filters: pre-commit, helm, gcloud, ansible-playbook
+# ---------------------------------------------------------------------------
+
+[filters.pre-commit]
+description = "Compact pre-commit output"
+match_command = "^pre-commit\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\[INFO\\] Installing environment",
+  "^\\[INFO\\] Once installed this environment will be reused",
+  "^\\[INFO\\] This may take a few minutes",
+  "^\\s*$",
+]
+max_lines = 40
+
+[filters.helm]
+description = "Compact helm output"
+match_command = "^helm\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^W\\d{4}",
+]
+truncate_lines_at = 120
+max_lines = 40
+
+[filters.gcloud]
+description = "Compact gcloud output"
+match_command = "^gcloud\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 120
+max_lines = 30
+
+[filters.ansible-playbook]
+description = "Compact ansible-playbook output"
+match_command = "^ansible-playbook\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^ok: \\[",
+  "^skipping: \\[",
+]
+max_lines = 60
+
+# ---------------------------------------------------------------------------
+# Inline tests — PR 2 filters
+# ---------------------------------------------------------------------------
+
+[[tests.pre-commit]]
+name = "strips INFO install noise, keeps hook results"
+input = """
+[INFO] Installing environment for https://github.com/psf/black.
+[INFO] Once installed this environment will be reused.
+[INFO] This may take a few minutes...
+Trim Trailing Whitespace.................................................Passed
+Fix End of Files.........................................................Passed
+Check Yaml...............................................................Failed
+- hook id: check-yaml
+- exit code: 1
+"""
+expected = "Trim Trailing Whitespace.................................................Passed\nFix End of Files.........................................................Passed\nCheck Yaml...............................................................Failed\n- hook id: check-yaml\n- exit code: 1"
+
+[[tests.pre-commit]]
+name = "all passed — no INFO noise"
+input = """
+[INFO] Installing environment for https://github.com/pre-commit/mirrors-isort.
+[INFO] Once installed this environment will be reused.
+isort....................................................................Passed
+black....................................................................Passed
+"""
+expected = "isort....................................................................Passed\nblack....................................................................Passed"
+
+[[tests.helm]]
+name = "strips blank lines, preserves release info"
+input = """
+NAME: my-release
+LAST DEPLOYED: Mon Jan 15 10:30:00 2024
+NAMESPACE: default
+STATUS: deployed
+REVISION: 3
+
+NOTES:
+Application is running.
+"""
+expected = "NAME: my-release\nLAST DEPLOYED: Mon Jan 15 10:30:00 2024\nNAMESPACE: default\nSTATUS: deployed\nREVISION: 3\nNOTES:\nApplication is running."
+
+[[tests.helm]]
+name = "strips glog W-prefix warnings"
+input = "W0115 10:30:00 warning message from internal\nNAME: my-chart\nSTATUS: deployed"
+expected = "NAME: my-chart\nSTATUS: deployed"
+
+[[tests.gcloud]]
+name = "strips blank lines, preserves output"
+input = """
+Updated property [core/project].
+
+NAME        REGION        STATUS
+my-cluster  us-central1   RUNNING
+"""
+expected = "Updated property [core/project].\nNAME        REGION        STATUS\nmy-cluster  us-central1   RUNNING"
+
+[[tests.gcloud]]
+name = "single line passthrough"
+input = "Listed 0 items."
+expected = "Listed 0 items."
+
+[[tests.ansible-playbook]]
+name = "strips ok and skipping lines, keeps changed and failures"
+input = """
+PLAY [all] *********************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [web01]
+ok: [web02]
+
+TASK [Install nginx] ***********************************************************
+changed: [web01]
+skipping: [web02]
+
+PLAY RECAP *********************************************************************
+web01                      : ok=2    changed=1    unreachable=0    failed=0
+web02                      : ok=1    changed=0    unreachable=0    failed=0
+"""
+expected = "PLAY [all] *********************************************************************\nTASK [Gathering Facts] *********************************************************\nTASK [Install nginx] ***********************************************************\nchanged: [web01]\nPLAY RECAP *********************************************************************\nweb01                      : ok=2    changed=1    unreachable=0    failed=0\nweb02                      : ok=1    changed=0    unreachable=0    failed=0"
+
+[[tests.ansible-playbook]]
+name = "failed task preserved"
+input = "TASK [Start service] ***\nfailed: [web01] => {\"msg\": \"Service not found\"}\nPLAY RECAP ***\nweb01 : ok=1 failed=1"
+expected = "TASK [Start service] ***\nfailed: [web01] => {\"msg\": \"Service not found\"}\nPLAY RECAP ***\nweb01 : ok=1 failed=1"

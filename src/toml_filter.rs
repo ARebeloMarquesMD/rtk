@@ -1,12 +1,13 @@
 /// TOML-based filter DSL for RTK.
 ///
 /// Provides a declarative pipeline of 8 stages that can be configured
-/// via `.rtk/filters.toml` (project-local) or built-in TOML embedded in the binary.
+/// via TOML files. Lookup priority (first match wins):
+///   1. `.rtk/filters.toml`              — project-local, committable with the repo
+///   2. `~/.config/rtk/filters.toml`     — user-global, applies to all projects
+///   3. Built-in TOML                     — `src/builtin_filters.toml`, embedded at compile time
+///   4. Passthrough                       — no match, handled by caller
 ///
-/// Lookup priority (first match wins):
-///   1. `.rtk/filters.toml` (PWD — project-local, committable)
-///   2. Built-in TOML (`src/builtin_filters.toml`, embedded at compile time)
-///   3. Passthrough (no match — handled by caller)
+/// `rtk init` generates a commented template for both levels (project or global).
 ///
 /// Environment variables:
 ///   - `RTK_NO_TOML=1`     — bypass TOML engine entirely
@@ -179,7 +180,18 @@ impl TomlFilterRegistry {
             }
         }
 
-        // Priority 2: built-in (embedded at compile time)
+        // Priority 2: user-global ~/.config/rtk/filters.toml
+        if let Some(config_dir) = dirs::config_dir() {
+            let global_path = config_dir.join("rtk").join("filters.toml");
+            if let Ok(content) = std::fs::read_to_string(&global_path) {
+                match Self::parse_and_compile(&content, "user-global") {
+                    Ok(f) => filters.extend(f),
+                    Err(e) => eprintln!("[rtk] warning: {}: {}", global_path.display(), e),
+                }
+            }
+        }
+
+        // Priority 3: built-in (embedded at compile time)
         let builtin = include_str!("builtin_filters.toml");
         match Self::parse_and_compile(builtin, "builtin") {
             Ok(f) => filters.extend(f),
@@ -211,6 +223,61 @@ impl TomlFilterRegistry {
     }
 }
 
+/// Commands already handled by dedicated Rust modules (routed by Clap before TOML).
+/// A TOML filter whose match_command matches one of these will never activate —
+/// Clap routes the command before `run_fallback()` is reached.
+const RUST_HANDLED_COMMANDS: &[&str] = &[
+    "ls",
+    "tree",
+    "read",
+    "smart",
+    "git",
+    "gh",
+    "aws",
+    "psql",
+    "pnpm",
+    "err",
+    "test",
+    "json",
+    "deps",
+    "env",
+    "find",
+    "diff",
+    "log",
+    "docker",
+    "kubectl",
+    "summary",
+    "grep",
+    "init",
+    "wget",
+    "wc",
+    "gain",
+    "config",
+    "vitest",
+    "prisma",
+    "tsc",
+    "next",
+    "lint",
+    "prettier",
+    "format",
+    "playwright",
+    "cargo",
+    "npm",
+    "npx",
+    "curl",
+    "discover",
+    "ruff",
+    "pytest",
+    "mypy",
+    "pip",
+    "go",
+    "golangci-lint",
+    "rewrite",
+    "proxy",
+    "verify",
+    "learn",
+];
+
 fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, String> {
     // Mutual exclusion: strip and keep cannot both be set
     if !def.strip_lines_matching.is_empty() && !def.keep_lines_matching.is_empty() {
@@ -219,6 +286,19 @@ fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, St
 
     let match_regex = Regex::new(&def.match_command)
         .map_err(|e| format!("invalid match_command regex: {}", e))?;
+
+    // Shadow warning: if match_command matches a Rust-handled command, this filter
+    // will never activate (Clap routes before run_fallback). Warn the author.
+    for cmd in RUST_HANDLED_COMMANDS {
+        if match_regex.is_match(cmd) {
+            eprintln!(
+                "[rtk] warning: filter '{}' match_command matches '{}' which is already \
+                 handled by a Rust module — this filter will never activate for that command",
+                name, cmd
+            );
+            break;
+        }
+    }
 
     let replace = def
         .replace
