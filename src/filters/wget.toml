@@ -1,0 +1,43 @@
+[filters.wget]
+description = "Compact wget download output"
+match_command = "^wget\\b"
+strip_ansi = true
+strip_lines_matching = [
+  "^\\s*$",
+  "^--\\d{4}-\\d{2}-\\d{2}",
+  "^Resolving ",
+  "^Connecting to ",
+  "^HTTP request sent",
+  "^Length:",
+  "^Saving to:",
+]
+match_output = [
+  { pattern = "saved \\[", message = "ok (downloaded)" },
+]
+max_lines = 10
+
+[[tests.wget]]
+name = "success short-circuits to ok"
+input = """
+--2024-01-15 10:30:00--  https://example.com/file.tar.gz
+Resolving example.com... 93.184.216.34
+Connecting to example.com|93.184.216.34|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 1048576 (1.0M) [application/gzip]
+Saving to: 'file.tar.gz'
+
+file.tar.gz         100%[===================>]   1.00M  2.50MB/s    in 0.4s
+
+2024-01-15 10:30:01 (2.50 MB/s) - 'file.tar.gz' saved [1048576/1048576]
+"""
+expected = "ok (downloaded)"
+
+[[tests.wget]]
+name = "error passes through"
+input = """
+--2024-01-15 10:30:00--  https://example.com/missing.tar.gz
+Resolving example.com... 93.184.216.34
+HTTP request sent, awaiting response... 404 Not Found
+2024-01-15 10:30:00 ERROR 404: Not Found.
+"""
+expected = "2024-01-15 10:30:00 ERROR 404: Not Found."

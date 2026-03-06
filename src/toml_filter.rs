@@ -1385,4 +1385,146 @@ match_command = "^make\\b"
         assert!(all_names.contains(&"make".to_string()));
         assert!(!tested.contains("make"));
     }
+
+    // --- Multi-file architecture tests (build.rs) ---
+
+    /// Verify BUILTIN_TOML was generated with the correct schema_version header.
+    /// build.rs injects it — if the const is somehow stale this fails immediately.
+    #[test]
+    fn test_builtin_toml_has_schema_version() {
+        assert!(
+            BUILTIN_TOML.contains("schema_version = 1"),
+            "BUILTIN_TOML must start with 'schema_version = 1' (injected by build.rs)"
+        );
+    }
+
+    /// Verify every expected filter name is present in BUILTIN_TOML.
+    /// This is the safeguard against accidentally deleting a filter file.
+    #[test]
+    fn test_builtin_all_expected_filters_present() {
+        let filters = make_filters(BUILTIN_TOML);
+        let names: std::collections::HashSet<&str> =
+            filters.iter().map(|f| f.name.as_str()).collect();
+
+        let expected = [
+            "ansible-playbook",
+            "cargo-run",
+            "docker-compose-ps",
+            "docker-inspect",
+            "du",
+            "fail2ban-client",
+            "gcloud",
+            "git-checkout",
+            "git-merge",
+            "git-remote",
+            "helm",
+            "iptables",
+            "make",
+            "mix-compile",
+            "mix-format",
+            "mvn-build",
+            "pio-run",
+            "pnpm-build",
+            "pre-commit",
+            "quarto-render",
+            "shopify-theme",
+            "sops",
+            "terraform-plan",
+            "tofu-fmt",
+            "tofu-init",
+            "tofu-plan",
+            "tofu-validate",
+            "trunk-build",
+            "wget",
+        ];
+
+        for name in &expected {
+            assert!(
+                names.contains(name),
+                "Built-in filter '{}' is missing — was its .toml file deleted from src/filters/?",
+                name
+            );
+        }
+    }
+
+    /// Verify the exact count of built-in filters.
+    /// Fails if a file is added/removed without updating this test.
+    #[test]
+    fn test_builtin_filter_count() {
+        let filters = make_filters(BUILTIN_TOML);
+        assert_eq!(
+            filters.len(),
+            29,
+            "Expected exactly 29 built-in filters, got {}. \
+             Update this count when adding/removing filters in src/filters/.",
+            filters.len()
+        );
+    }
+
+    /// Verify that every built-in filter has at least one inline test.
+    /// Prevents shipping filters with zero test coverage.
+    #[test]
+    fn test_builtin_all_filters_have_inline_tests() {
+        let mut all_names: Vec<String> = Vec::new();
+        let mut tested: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut outcomes = Vec::new();
+        collect_test_outcomes(
+            BUILTIN_TOML,
+            None,
+            &mut outcomes,
+            &mut all_names,
+            &mut tested,
+        );
+
+        let untested: Vec<&str> = all_names
+            .iter()
+            .filter(|name| !tested.contains(name.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        assert!(
+            untested.is_empty(),
+            "The following built-in filters have no inline tests: {:?}\n\
+             Add [[tests.<name>]] entries to the corresponding src/filters/<name>.toml file.",
+            untested
+        );
+    }
+
+    /// Verify that adding a new filter entry to any TOML content makes it
+    /// immediately discoverable via find_filter_in — simulating how a new
+    /// src/filters/my-tool.toml would work after cargo build.
+    #[test]
+    fn test_new_filter_discoverable_after_concat() {
+        // Simulate build.rs: concat BUILTIN_TOML with a brand-new filter block
+        let new_filter = r#"
+[filters.my-new-tool]
+description = "Compact my-new-tool output"
+match_command = "^my-new-tool\\b"
+strip_lines_matching = ["^\\s*$"]
+max_lines = 30
+on_empty = "my-new-tool: ok"
+
+[[tests.my-new-tool]]
+name = "strips blank lines"
+input = "output line 1\n\noutput line 2"
+expected = "output line 1\noutput line 2"
+"#;
+        let combined = format!("{}\n\n{}", BUILTIN_TOML, new_filter);
+        let filters = make_filters(&combined);
+
+        // All 29 existing filters still present + 1 new = 30
+        assert_eq!(
+            filters.len(),
+            30,
+            "Expected 30 filters after concat (29 built-in + 1 new)"
+        );
+
+        // New filter is discoverable
+        let found = find_filter_in("my-new-tool --verbose", &filters);
+        assert!(
+            found.is_some(),
+            "Newly added filter must be discoverable via find_filter_in"
+        );
+        assert_eq!(found.unwrap().name, "my-new-tool");
+    }
 }
