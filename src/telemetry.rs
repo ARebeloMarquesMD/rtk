@@ -137,19 +137,22 @@ fn detect_install_method() -> &'static str {
         Err(_) => return "unknown",
     };
 
-    // Resolve symlinks to find the real binary location
     let real_path = std::fs::canonicalize(&exe)
         .unwrap_or(exe)
         .to_string_lossy()
         .to_string();
 
-    if real_path.contains("/Cellar/rtk/") || real_path.contains("/homebrew/") {
+    install_method_from_path(&real_path)
+}
+
+fn install_method_from_path(path: &str) -> &'static str {
+    if path.contains("/Cellar/rtk/") || path.contains("/homebrew/") {
         "homebrew"
-    } else if real_path.contains("/.cargo/bin/") {
+    } else if path.contains("/.cargo/bin/") || path.contains("\\.cargo\\bin\\") {
         "cargo"
-    } else if real_path.contains("/.local/bin/") {
+    } else if path.contains("/.local/bin/") || path.contains("\\.local\\bin\\") {
         "script"
-    } else if real_path.contains("/nix/store/") {
+    } else if path.contains("/nix/store/") {
         "nix"
     } else {
         "other"
@@ -194,6 +197,22 @@ mod tests {
             "unexpected install method: {}",
             method
         );
+    }
+
+    #[test]
+    fn test_install_method_unix_paths() {
+        assert_eq!(install_method_from_path("/opt/homebrew/Cellar/rtk/0.27.2/bin/rtk"), "homebrew");
+        assert_eq!(install_method_from_path("/home/user/.cargo/bin/rtk"), "cargo");
+        assert_eq!(install_method_from_path("/home/user/.local/bin/rtk"), "script");
+        assert_eq!(install_method_from_path("/nix/store/abc123-rtk/bin/rtk"), "nix");
+        assert_eq!(install_method_from_path("/usr/local/bin/rtk"), "other");
+    }
+
+    #[test]
+    fn test_install_method_windows_paths() {
+        assert_eq!(install_method_from_path(r"C:\Users\dev\.cargo\bin\rtk.exe"), "cargo");
+        assert_eq!(install_method_from_path(r"C:\Users\dev\.local\bin\rtk.exe"), "script");
+        assert_eq!(install_method_from_path(r"C:\Program Files\rtk\rtk.exe"), "other");
     }
 
     #[test]
