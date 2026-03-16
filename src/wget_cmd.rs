@@ -45,6 +45,7 @@ pub fn run(url: &str, args: &[String], verbose: u8) -> Result<()> {
         let msg = format!("⬇️ {} FAILED: {}", compact_url(url), error);
         println!("{}", msg);
         timer.track(&format!("wget {}", url), "rtk wget", &raw_output, &msg);
+        std::process::exit(output.status.code().unwrap_or(1));
     }
 
     Ok(())
@@ -107,6 +108,7 @@ pub fn run_stdout(url: &str, args: &[String], verbose: u8) -> Result<()> {
         let msg = format!("⬇️ {} FAILED: {}", compact_url(url), error);
         println!("{}", msg);
         timer.track(&format!("wget -O - {}", url), "rtk wget -o", &stderr, &msg);
+        std::process::exit(output.status.code().unwrap_or(1));
     }
 
     Ok(())
